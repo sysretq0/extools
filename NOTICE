@@ -1,0 +1,59 @@
+# NOTICE
+
+## Provenance
+
+etools is an independent implementation. It reimplements the observable behaviour
+of two AOSP command-line tools — `dumpsys` and `cmd` — and calls Android framework
+services over Binder.
+
+The behaviour it matches is derived directly from the Android Open Source Project.
+`scripts/gen_compat.py` fetches `frameworks/native`'s `cmds/dumpsys/dumpsys.cpp`,
+`cmds/cmd/cmd.cpp` and the private binder headers for every supported release, and
+measures the usage text, accepted flag sets, short option strings, error wording
+and dispatch conditions into `include/etools/compat.hpp`. Nothing user-visible is
+written from memory.
+
+- Android Open Source Project — <https://source.android.com> — Apache License 2.0
+- Copyright (C) The Android Open Source Project
+
+The private Binder headers used to compile against are likewise AOSP, fetched at
+build time by `scripts/fetch_headers.sh` and not vendored into this repository.
+The `.so` files a build links are pulled from the attached device, or are stubs
+carrying only the SONAME when no device is attached; no prebuilt binaries are
+committed here.
+
+The argument parsers, the section extractor and the dump-type handling began as
+code in `/work/bidl` (GPL-3.0-only, same author), and are used here under the same
+GPL-3.0-only terms.
+
+## How compatibility was verified
+
+1. **Against a live device.** API 34, arm64, `uid 2000`. Output compared
+   byte-for-byte with `/system/bin/dumpsys` and `/system/bin/cmd`. Services whose
+   output carries live counters were additionally checked against a control run of
+   the stock tool against itself, so volatile output was never mistaken for an
+   incompatibility.
+
+2. **Against AOSP source, per release.** Every supported release is fetched and
+   measured on its own; `docs/compat_matrix.md` records one row per ref. This is
+   the check that a change on a new branch cannot pass unnoticed.
+
+3. **Against the floor release.** No symbol in a built binary may be newer than
+   API 26: `scripts/check_symbols.sh` requires every hard `android::` reference to
+   be on a fail-closed allowlist AND to be found in the `android-8.0.0_r1` source
+   tree. Symbols that exist only on newer releases are weak, which makes their
+   absence a null check rather than a dead binary.
+
+`docs/notes.md` states which of these is a hardware result and which is a source
+result, including the releases that have not been run on hardware at all.
+
+## Known divergences from the stock tools
+
+- On API 26 and 27 the invalid-timeout error message omits the `(seconds)`
+  qualifier that Android 9 added.
+- A service that asks its caller to open an output file gets a refusal, where the
+  stock tool would open it after an SELinux check a shell-uid client cannot pass.
+- `--pid`, `--thread` and `--clients` are refused rather than approximated, each
+  for a checked reason recorded in `docs/notes.md`.
+- Under `--ext-shape null`, `cmde` returns whether the transaction succeeded rather
+  than the service's own exit code. That is the entire point of the flag.

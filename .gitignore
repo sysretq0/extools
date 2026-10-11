@@ -1,0 +1,10 @@
+# Build output - never commit binaries
+build/
+
+# Fetched by scripts/setup.sh and scripts/gen_compat.py. Not source: the headers
+# come from AOSP, the .so files are pulled off the device (which is what the
+# binary links at runtime), and the per-ref source trees are research material.
+third_party/
+
+# scratch output
+__pycache__/
