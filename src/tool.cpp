@@ -190,7 +190,17 @@ int dumpsys_pass(int argc, char** argv, const ExtFlags& ext) {
         // because AOSP prints it only if the dump thread started, which is only
         // if checkService succeeded. Printing it first puts a header above the
         // "Can't find service" that has to stand alone.
-        if (!service_available(s)) {
+        //
+        // With -w (API 37) the service is waited for rather than merely looked
+        // up. getService() is the closest call available from the headers this
+        // compiles against: upstream uses waitForService, which waits
+        // indefinitely, and is declared only in newer headers than the ones the
+        // floor API requires. Calling it through its vtable slot on a device
+        // whose interface does not declare it would read a slot that is not
+        // there. So -w waits as long as getService waits and reports
+        // "Can't find service" after that. Recorded in docs/notes.md.
+        const bool found = o.wait_for_service ? wait_for_service(s) : service_available(s);
+        if (!found) {
             std::fprintf(stderr, "Can't find service: %s\n", s.c_str());
             continue;
         }
@@ -325,7 +335,10 @@ int run_cmd_tool(int argc, char** argv, const ExtFlags& ext) {
         // service that does not exist yet, so a caller asking for -w gets the
         // wait rather than an immediate "can't find".
         if (sm->getService(android::String16(service.c_str())) == nullptr) {
-            std::fprintf(stderr, "cmde: Can't find service: %s\n", service.c_str());
+            // "cmd:", not "cmde:". The wording is AOSP's, and a caller
+            // comparing the two tools must not be able to tell which binary
+            // produced it. Same reasoning as leaving --help alone.
+            std::fprintf(stderr, "cmd: Can't find service: %s\n", service.c_str());
             return 20;   // cmd returns 20, not 1, for a missing service
         }
     }
@@ -336,7 +349,7 @@ int run_cmd_tool(int argc, char** argv, const ExtFlags& ext) {
     // conflating them is how a service that REFUSES a subcommand ends up
     // reported as a missing service.
     if (!service_available(service)) {
-        std::fprintf(stderr, "cmde: Can't find service: %s\n", service.c_str());
+        std::fprintf(stderr, "cmd: Can't find service: %s\n", service.c_str());
         return 20;   // cmd returns 20 for a missing service
     }
 
@@ -356,7 +369,7 @@ int run_cmd_tool(int argc, char** argv, const ExtFlags& ext) {
         case -android::UNEXPECTED_NULL:     errstr = "Unexpected null"; break;
         default:                            errstr = std::strerror(-status); break;
         }
-        std::fprintf(stderr, "cmde: Failure calling service %s: %s (%d)\n", service.c_str(),
+        std::fprintf(stderr, "cmd: Failure calling service %s: %s (%d)\n", service.c_str(),
                      errstr, -status);
         return status;
     }

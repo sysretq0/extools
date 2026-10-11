@@ -82,6 +82,10 @@ std::vector<std::string> list_services(bool only_retrievable = false, int priori
 // Whether the service can be reached at all. Cheap: one service-manager lookup.
 bool service_available(const std::string& service);
 
+// Like service_available(), but waits briefly for a service that has not started
+// yet instead of requiring it to exist already.
+bool wait_for_service(const std::string& service);
+
 // ro.build.version.sdk, read once and cached. 0 when the property is
 // unreadable, which every lookup resolves as "assume an old device".
 int device_sdk();

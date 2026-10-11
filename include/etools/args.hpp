@@ -50,6 +50,13 @@ struct DumpsysOptions {
     int dump_type_flags = 0;         // --dump/--pid/--stability/--thread/--clients
     bool want_help = false;
 
+    // -w: wait for the service to be started before dumping. API 37 only
+    // (android17-release); before that the ROM's dumpsys does not accept it and
+    // a -w after the service name is forwarded to the service instead. Read
+    // from the variant's own optstring rather than hardcoded, so this is true
+    // where AOSP has the flag and false where it does not.
+    bool wait_for_service = false;
+
     // Filled by the --ext-section layer above this parser, NOT by getopt: the
     // extension namespace is stripped from argv before the AOSP parser ever sees
     // it, and this table holds AOSP options only. Empty means "print the dump".

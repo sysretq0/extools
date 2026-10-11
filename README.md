@@ -91,7 +91,9 @@ remembered: `scripts/gen_compat.py` fetches each supported release's
 `dumpsys.cpp`, `cmd.cpp` and binder headers, and emits both the table the library
 reads (`include/etools/compat.hpp`) and a full per-ref matrix
 (`docs/compat_matrix.md`). One row per release; nothing is inferred from a
-neighbouring release.
+neighbouring release. That already paid for itself: API 37's `dumpsys` adds a
+`-w` short option and rewrites its help text, which a table that had inferred
+"API 33-37 are identical" from one release could not have noticed.
 
 ```console
 $ ./scripts/gen_compat.py                 # re-measure; regenerates both artefacts
@@ -100,9 +102,12 @@ $ ./scripts/check_symbols.sh build/release/*   # fail if any symbol is newer tha
 $ ./scripts/run_tests_host.sh             # the parsers and the --ext- rules, on the host
 ```
 
-Supported releases: API 26 through 36, plus `main`. What has been verified on
-hardware and what has not is stated in `docs/notes.md` — read that before
-relying on a release.
+Supported releases: API 26 through 37 (`android-8.0.0_r1` … `android17-release`),
+each fetched and measured on its own. `main` is measured too, but as a *tip*: it
+is given no API level and is never folded into a numbered row, because whatever
+it has already changed belongs to a release that does not exist yet. What has
+been verified on hardware and what has not is stated in `docs/notes.md` — read
+that before relying on a release.
 
 ## Provenance
 

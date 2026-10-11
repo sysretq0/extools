@@ -12,7 +12,7 @@ of this family claimed an API 26 floor having tested one device.
 
 | claim | how | state |
 |---|---|---|
-| dumpsys/cmd behaviour per release | `scripts/gen_compat.py` fetches each release's own `dumpsys.cpp`, `cmd.cpp` and binder headers and measures them | **12 refs measured**: API 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36 and `main` |
+| dumpsys/cmd behaviour per release | `scripts/gen_compat.py` fetches each release's own `dumpsys.cpp`, `cmd.cpp` and binder headers and measures them | **13 refs measured**: API 26 through 37 (`android17-release`), plus `main` as a tip with no API level |
 | binder surface per release | same script: `shellCommand` arity, `listServices` arity, `IResultReceiver::send` payload, `Stability`, `BinderDebug.h`, `statusToString`, `getDebugPid` | measured, per ref, in `docs/compat_matrix.md` |
 | nothing references a symbol newer than API 26 | `scripts/check_symbols.sh`: allowlist, fails closed, **plus** every hard symbol must be found in the `android-8.0.0_r1` source tree | **passes for all 8 binaries** (4 ABIs × 2 tools), 58 hard symbols each, one weak by design |
 | parses reproduce AOSP per release | `tests/test_flags.cpp`, 233 assertions, runs on the host in a second | **passes** on host and on device |
@@ -61,6 +61,28 @@ longer matches AOSP.
 
 API 26 and 27 collapse into one table row because they were measured and are
 identical — not because a threshold assumed it.
+
+**This caught a real flag immediately.** API 37's `dumpsys` gains a `-w` short
+option ("wait for service indefinitely to be ready before dumping") and rewrites
+its help text to document it. A table that had inferred API 33-37 from
+android13 — which is exactly what the predecessor asserted, and what its own test
+suite checked — could not see it, and the mistake would have surfaced only on a
+device nobody had. `tests/test_flags.cpp` now pins `-w` to API 37 specifically,
+asserts that 26-36 reject it, and asserts that after the service name it is the
+service's argument on every release (AOSP's optstring starts with `+`, so getopt
+stops at the first non-option there too).
+
+The QPR point-release branches were measured too, and carry no new behaviour:
+android15-qpr1/qpr2 and android16-qpr1/qpr2 all still read `+t:T:l`.
+
+`-w` is implemented as `getService()` — waiting briefly for a service that has
+not started — where upstream waits indefinitely with `waitForService()`. That
+method is declared only in headers newer than the API 29 ones the floor
+requires, and reaching it through its vtable slot on a device whose interface
+does not declare it would read a slot that is not there. So `-w` waits as long
+as `getService()` waits and then reports `Can't find service`. That is the one
+known behavioural divergence on API 37, and it is recorded as such rather than
+papered over.
 
 ### D3. Two `IResultReceiver`s share one descriptor. The trailing payload is not ours.
 

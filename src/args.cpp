@@ -56,8 +56,16 @@ const compat::CmdVariant* cmd_variant_for(int sdk) {
 //
 // Reads the very table that was handed to getopt_long, rather than re-deriving the
 // accepted names from the generated variant. One table, one source of truth.
-bool is_client_side_flag(const struct option* table, const std::string& a) {
-    if (a == "-l" || a == "-T" || a == "-t") return true;
+// `optstring` is this API level's own optstring, because "is this flag ours?"
+// is a per-release question: -w is a client flag on API 37 and a service
+// argument on API 34, where the real dumpsys has no such flag and forwards it.
+// Hardcoding the list per release is what makes that distinction wrong.
+bool is_client_side_flag(const struct option* table, const std::string& a,
+                         const char* optstring) {
+    if (a.size() == 2 && a[0] == '-' && std::strchr(optstring, a[1]) != nullptr &&
+        a[1] != '-') {
+        return true;
+    }
     if (a.rfind("--", 0) != 0) return false;
     std::string name = a.substr(2);
     const size_t eq = name.find('=');
@@ -183,6 +191,12 @@ bool parse_dumpsys(int argc, char** argv, DumpsysOptions* out, std::string* erro
             out->timeout_ms = v;
             break;
         }
+        case 'w':
+            // API 37+. Reachability of the case depends on the optstring above,
+            // which is why no other release can produce it.
+            out->wait_for_service = true;
+            break;
+
         case 'l':
             out->list_only = true;
             break;
@@ -292,6 +306,14 @@ bool parse_dumpsys(int argc, char** argv, DumpsysOptions* out, std::string* erro
     }
 
     // dumpsys's own validation, so the same mistakes are caught the same way.
+    // -w with no service named is in the same condition upstream - it would
+    // otherwise wait for every service in turn, which is not what it says - and
+    // draws the same response: usage, and no message.
+    if (out->wait_for_service && out->services.empty()) {
+        if (error) error->clear();
+        if (style) *style = ErrorStyle::kUsageOnly;
+        return false;
+    }
     if (out->skip_mode && out->skipped_services.empty()) {
         if (error) error->clear();
         if (style) *style = ErrorStyle::kUsageOnly;
@@ -304,7 +326,7 @@ bool parse_dumpsys(int argc, char** argv, DumpsysOptions* out, std::string* erro
     }
 
     for (const std::string& a : out->dump_args) {
-        if (is_client_side_flag(long_options, a)) {
+        if (is_client_side_flag(long_options, a, variant->short_options)) {
             out->warning =
                 "'" + a +
                 "' comes after the service name, so dumpsys forwards it to the "

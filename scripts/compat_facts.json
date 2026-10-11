@@ -441,6 +441,51 @@
  },
  {
   "api": 37,
+  "ref": "android17-release",
+  "usage": "usage: dumpsys\\n         To dump all services.\\nor:\\n       dumpsys [-t TIMEOUT] [--priority LEVEL] [--clients] [--dump] [--pid] [--thread] [--help | -l | --skip SERVICES | [-w] SERVICE [ARGS]]\\n         --help: shows this help\\n         -l: only list services, do not dump them\\n         -t TIMEOUT_SEC: TIMEOUT to use in seconds instead of default 10 seconds\\n         -T TIMEOUT_MS: TIMEOUT to use in milliseconds instead of default 10 seconds\\n         --clients: dump client PIDs instead of usual dump\\n         --dump: ask the service to dump itself (this is the default)\\n         --pid: dump PID instead of usual dump\\n         --proto: filter services that support dumping data in proto format. Dumps\\n               will be in proto format.\\n         --priority LEVEL: filter services based on specified priority\\n               LEVEL must be one of CRITICAL | HIGH | NORMAL\\n         --skip SERVICES: dumps all services but SERVICES (comma-separated list)\\n         --stability: dump binder stability information instead of usual dump\\n         --thread: dump thread usage instead of usual dump\\n         -w: wait for service indefinitely to be ready before dumping\\n         SERVICE [ARGS]: dumps only service SERVICE, optionally passing ARGS to it\\n",
+  "options": [
+   "help",
+   "clients",
+   "dump",
+   "pid",
+   "priority",
+   "proto",
+   "skip",
+   "stability",
+   "thread"
+  ],
+  "short_options": "+t:T:lw",
+  "proto_shim": true,
+  "list_header_or_list": true,
+  "combines": true,
+  "error_style": 2,
+  "cmd_no_args": "cmd: No service specified; use -l to list all running services. Use -w to start and wait for a service.",
+  "cmd_wait": true,
+  "shell_callback": true,
+  "shell_args": 6,
+  "list_services": [
+   "int dumpsysFlags = DUMP_FLAG_PRIORITY_ALL"
+  ],
+  "rr_send": "int32_t resultCode",
+  "ibinder": {
+   "getDebugPid": true,
+   "shellCommand": true
+  },
+  "rr_send_writes": [
+   "writeInterfaceToken(IResultReceiver::getInterfaceDescriptor()",
+   "writeInt32(resultCode)"
+  ],
+  "rr_send_java": "int resultCode, in Bundle resultData",
+  "stability": true,
+  "binderdebug": true,
+  "status_to_string": [
+   "android17-release/system/core/libutils/binder/Errors.cpp",
+   "android17-release/system/core/libutils/binder/include/utils/Errors.h",
+   "android17-release/system/core/libutils/include/utils/Errors.h"
+  ]
+ },
+ {
+  "api": null,
   "ref": "main",
   "usage": "usage: dumpsys\\n         To dump all services.\\nor:\\n       dumpsys [-t TIMEOUT] [--priority LEVEL] [--clients] [--dump] [--pid] [--thread] [--help | -l | --skip SERVICES | SERVICE [ARGS]]\\n         --help: shows this help\\n         -l: only list services, do not dump them\\n         -t TIMEOUT_SEC: TIMEOUT to use in seconds instead of default 10 seconds\\n         -T TIMEOUT_MS: TIMEOUT to use in milliseconds instead of default 10 seconds\\n         --clients: dump client PIDs instead of usual dump\\n         --dump: ask the service to dump itself (this is the default)\\n         --pid: dump PID instead of usual dump\\n         --proto: filter services that support dumping data in proto format. Dumps\\n               will be in proto format.\\n         --priority LEVEL: filter services based on specified priority\\n               LEVEL must be one of CRITICAL | HIGH | NORMAL\\n         --skip SERVICES: dumps all services but SERVICES (comma-separated list)\\n         --stability: dump binder stability information instead of usual dump\\n         --thread: dump thread usage instead of usual dump\\n         SERVICE [ARGS]: dumps only service SERVICE, optionally passing ARGS to it\\n",
   "options": [

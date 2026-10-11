@@ -40,6 +40,6 @@ if ! diff -u "$TMP/compat_matrix.md" docs/compat_matrix.md; then
 fi
 
 if [ "$rc" -eq 0 ]; then
-  echo "compat: both artefacts are reproducible from AOSP source (API 26-36 + main)"
+  echo "compat: both artefacts are reproducible from AOSP source (API 26-37 + main tip)"
 fi
 exit "$rc"

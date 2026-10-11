@@ -52,21 +52,31 @@ bool parse_cmd_at(int sdk, int argc, char** argv, CmdMode* mode, std::string* se
     return parse_cmd(argc, argv, mode, service, args, error, sdk);
 }
 
-bool pd(const std::vector<std::string>& v, DumpsysOptions* out, ErrorStyle* style = nullptr) {
+
+// A parse pinned to an explicit API level. Version-dependent behaviour must be
+// asserted against the release it belongs to, or the suite asserts something
+// different on every ROM.
+bool pd_at(int sdk, const std::vector<std::string>& v, DumpsysOptions* out,
+           std::string* err = nullptr, ErrorStyle* style = nullptr) {
     std::vector<std::string> store = v;
     std::vector<char*> av;
     for (auto& s : store) av.push_back(const_cast<char*>(s.c_str()));
     av.push_back(nullptr);
-    std::string err;
-    return parse_dumpsys_at(kApi, static_cast<int>(av.size()) - 1, av.data(), out, &err, style);
+    std::string local;
+    std::string* e = err != nullptr ? err : &local;
+    return parse_dumpsys_at(sdk, static_cast<int>(av.size()) - 1, av.data(), out, e, style);
+}
+
+bool pd(const std::vector<std::string>& v, DumpsysOptions* out, ErrorStyle* style = nullptr) {
+    return pd_at(kApi, v, out, nullptr, style);
 }
 
 }  // namespace
 
 int main() {
-    // ======================= 1. etools flags are not dumpsys flags =====
-    // This is the rule that keeps the tools untouched. etools parses --loop,
-    // --timeout and --interval BEFORE the subcommand, so by the time this
+    // ======================= 1. the --ext- namespace =====================
+    // This is the rule that keeps the tools untouched. The extensions are
+    // stripped from argv before this parser runs, so by the time this
     // parser runs they must be gone. If any of them ever parses here, the
     // invocation `etools dumpsys --loop ...` would silently work instead of
     // failing the way the real tool fails.
@@ -432,7 +442,23 @@ int main() {
             ok(mentions("--clients") == (sdk >= 33),
                "api " + std::to_string(sdk) + " help mentions --clients");
         }
-        ok(std::strcmp(dumpsys_usage_text(33), dumpsys_usage_text(37)) == 0, "33 covers 34-37");
+        // API 37's help is NOT API 33's. The predecessor's table asserted this
+        // equality - it inferred API 33-37 from one measured release - and it is
+        // false: android17-release documents -w. The equality that does hold is
+        // 33 through 36.
+        ok(std::strcmp(dumpsys_usage_text(33), dumpsys_usage_text(34)) == 0 &&
+               std::strcmp(dumpsys_usage_text(34), dumpsys_usage_text(35)) == 0 &&
+               std::strcmp(dumpsys_usage_text(35), dumpsys_usage_text(36)) == 0,
+           "33 covers 34-36");
+        ok(std::strcmp(dumpsys_usage_text(33), dumpsys_usage_text(37)) != 0,
+           "37 is not 33 - it documents -w");
+        {
+            const std::string u37 = dumpsys_usage_text(37);
+            ok(u37.find("-w: wait for service") != std::string::npos,
+               "API 37's help is the one that documents -w");
+            ok(std::string(dumpsys_usage_text(36)).find("-w:") == std::string::npos,
+               "and API 36's is not");
+        }
         // Below the oldest known release, fall back to the oldest rather than
         // guessing something newer. The floor moved 29 -> 26 when the 8.x point
         // tags were added; API 26 is the lowest release etools supports because
@@ -1049,6 +1075,57 @@ int main() {
         ok(ext({"dumpsyse", "--help"}, ExtTool::kDumpsys, &f, &rest) && !f.want_help &&
                rest.size() == 2 && rest[1] == "--help",
            "--help is left for the tool to answer");
+
+        // -w arrived in API 37 (android17-release). This is asserted per release
+        // because the predecessor's table inferred API 33-37 from ONE of them
+        // and so missed a flag that exists on the newest supported release -
+        // invisible until someone ran it on a 37 device.
+        {
+            DumpsysOptions o;
+            ok(pd_at(37, {"dumpsys", "-w", "power"}, &o), "API 37 accepts -w");
+            ok(o.wait_for_service, "and it is recorded as ours, not forwarded");
+            ok(o.services.size() == 1 && o.services[0] == "power",
+               "and the service still parses");
+            // Measured per release: the optstring is "+t:T:l" up to and including
+            // android16-release (and its QPR branches), and gains the w in
+            // android17-release.
+            ok(!pd_at(36, {"dumpsys", "-w", "power"}, &o), "API 36 rejects -w");
+            ok(!pd_at(35, {"dumpsys", "-w", "power"}, &o), "API 35 rejects -w");
+            ok(!pd_at(34, {"dumpsys", "-w", "power"}, &o), "API 34 rejects -w");
+            ok(!pd_at(33, {"dumpsys", "-w", "power"}, &o), "API 33 rejects -w");
+            ok(!pd_at(30, {"dumpsys", "-w", "power"}, &o), "API 30 rejects -w");
+            ok(!pd_at(29, {"dumpsys", "-w", "power"}, &o), "API 29 rejects -w");
+            ok(!pd_at(26, {"dumpsys", "-w", "power"}, &o), "API 26 rejects -w");
+
+            // After the service name it is the service's argument on EVERY
+            // release, 37 included: AOSP's optstring starts with '+', so getopt
+            // stops at the first non-option there too.
+            DumpsysOptions f34, f37;
+            ok(pd_at(34, {"dumpsys", "power", "-w"}, &f34) && f34.dump_args.size() == 1 &&
+                   f34.dump_args[0] == "-w" && !f34.wait_for_service,
+               "on API 34 a -w after the service is the service's argument");
+            ok(pd_at(37, {"dumpsys", "power", "-w"}, &f37) && f37.dump_args.size() == 1 &&
+                   f37.dump_args[0] == "-w" && !f37.wait_for_service,
+               "on API 37 the same token is still forwarded, as upstream does");
+
+            // The advisory warning about a flag placed too late is only for flags
+            // this release actually HAS, which is why it reads the optstring
+            // rather than a hardcoded list: warning about a -w on API 34, where
+            // no such flag exists, would be inventing a mistake.
+            ok(pd_at(37, {"dumpsys", "power", "-w"}, &f37) && !f37.warning.empty(),
+               "API 37 warns about a misplaced -w");
+            ok(pd_at(34, {"dumpsys", "power", "-w"}, &f34) && f34.warning.empty(),
+               "API 34 does not warn about a -w it does not have");
+
+            // -w with no service named draws the same response as --skip with no
+            // names: usage alone, no message.
+            std::string err;
+            ErrorStyle style = ErrorStyle::kMessageOnly;
+            DumpsysOptions w;
+            ok(!pd_at(37, {"dumpsys", "-w"}, &w, &err, &style) && err.empty() &&
+                   style == ErrorStyle::kUsageOnly,
+               "API 37: bare -w is usage alone, like bare --skip");
+        }
 
         // --ext-help is OURS and belongs to both binaries: both have extensions,
         // so both document them. The tool's own --help is never intercepted,

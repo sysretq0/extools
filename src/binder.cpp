@@ -183,6 +183,17 @@ const char* version() { return ETOOLS_VERSION_STRING; }
 
 void pool_start() { internal::ensure_pool(); }
 
+// Looks a service up, waiting briefly for it rather than requiring it to exist
+// already. getService() is documented as blocking a few seconds for a service
+// that has not started yet, which is the closest available stand-in for the
+// indefinite wait upstream's dumpsys -w performs; see the comment at the call
+// site and docs/notes.md.
+bool wait_for_service(const std::string& service) {
+    const sp<IServiceManager> sm = internal::manager();
+    if (sm == nullptr) return false;
+    return sm->getService(String16(service.c_str())) != nullptr;
+}
+
 bool service_available(const std::string& service) {
     const sp<IServiceManager> sm = internal::manager();
     return sm != nullptr && internal::find(sm.get(), service) != nullptr;

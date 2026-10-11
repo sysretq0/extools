@@ -50,14 +50,29 @@ REFS = {
     34: "android14-release",
     35: "android15-release",
     36: "android16-release",
-    37: "main",
+    37: "android17-release",
 }
+
+# Measured, but NOT given an API level and never folded into a table row.
+#
+# `main` is the tip: whatever API ships next, plus whatever is already on it.
+# Calling it "37" would be exactly the mistake this script exists to prevent -
+# assigning a release number to something that was not measured as that release -
+# and folding it into the 37 row would ship whatever main has already changed
+# into binaries claiming to be Android 17. So it is measured, shown, and its
+# divergence from android17-release is REPORTED rather than encoded.
+TIPS = ["main"]
 
 # repo -> path -> what we grep. Fetched as +archive tarballs, extracted per ref.
 FETCH = {
+    # libs/binder and libs/binderdebug are fetched as whole trees; their include/
+    # subdirectories come with them. Listing a subdirectory separately is not
+    # merely redundant - it breaks the cache, because extracting libs/binder/include
+    # CREATES libs/binder/, so the later libs/binder fetch sees the directory
+    # already there and skips itself. The result is a tree with headers and no
+    # sources, which fails much later as "IResultReceiver.cpp not found".
     "frameworks/native": ["cmds/dumpsys", "cmds/cmd",
-                          "libs/binder/include", "libs/binder",
-                          "libs/binderdebug"],
+                          "libs/binder", "libs/binderdebug"],
     "system/core": ["libutils"],
     "system/libbase": ["include"],   # absent before Android 10; tolerated
 }
@@ -289,6 +304,87 @@ def c_literal(s):
     return '"' + s + '"'
 
 
+def measure_row(api, ref, cache):
+    """Everything this project depends on, read from one ref's own tree.
+
+    api is None for a tip ref: measured identically, but given no API
+    number, because no release has been cut for it yet.
+    """
+    # frameworks/base files are fetched per-ref (not archived with the rest)
+    # because core/java is a multi-gigabyte tree in archive form.
+    for bf in BASE_FILES:
+        p = cache / ref / "frameworks/base" / bf
+        if not p.exists():
+            src = fetch_file("frameworks/base", bf, ref)
+            if src is None:
+                sys.exit(f"{ref}: {bf} not found on frameworks/base")
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(src)
+    dsrc = read(cache, ref, "frameworks/native", "cmds/dumpsys/dumpsys.cpp")
+    csrc = read(cache, ref, "frameworks/native", "cmds/cmd/cmd.cpp")
+    if dsrc is None or csrc is None:
+        sys.exit(f"{ref}: dumpsys.cpp or cmd.cpp missing - path moved?")
+    u, opts = dumpsys_usage(dsrc), dumpsys_options(dsrc)
+    if not u:
+        sys.exit(f"{ref}: no usage() found")
+    row = dict(
+        api=api, ref=ref, usage=u, options=opts,
+        short_options=dumpsys_short_options(dsrc),
+        proto_shim=has_proto_shim(dsrc),
+        list_header_or_list=list_header_or_list(dsrc),
+        combines=combines_dump_types(dsrc),
+        error_style=dump_error_style(dsrc),
+        cmd_no_args=cmd_no_args(csrc),
+        cmd_wait=cmd_has_wait(csrc),
+    )
+
+    # binder surface
+    ib = read(cache, ref, "frameworks/native", "libs/binder/include/binder/IBinder.h")
+    if ib is None:
+        ib = read(cache, ref, "frameworks/native", "include/binder/IBinder.h")
+    if ib is None:
+        sys.exit(f"{ref}: IBinder.h not found in either header root")
+    ism = read(cache, ref, "frameworks/native", "libs/binder/include/binder/IServiceManager.h")
+    if ism is None:
+        ism = read(cache, ref, "frameworks/native", "include/binder/IServiceManager.h")
+    irr = read(cache, ref, "frameworks/native", "libs/binder/include/binder/IResultReceiver.h")
+    if irr is None:
+        irr = read(cache, ref, "frameworks/native", "include/binder/IResultReceiver.h")
+    cb, arity = ibinder_shell_command(ib)
+    if cb is None:
+        sys.exit(f"{ref}: shellCommand signature not found in IBinder.h")
+    row["shell_callback"] = cb
+    row["shell_args"] = arity
+    row["list_services"] = servicemanager_list_services(ism)
+    row["rr_send"] = result_receiver_send(irr)
+    row["ibinder"] = ibinder_members(ib)
+    irr_cpp = read(cache, ref, "frameworks/native", "libs/binder/IResultReceiver.cpp")
+    if irr_cpp is None:
+        sys.exit(f"{ref}: IResultReceiver.cpp not found")
+    row["rr_send_writes"] = rr_send_native(irr_cpp)
+    base_aidl = read(cache, ref, "frameworks/base",
+                     BASE_FILES[0])
+    row["rr_send_java"] = rr_send_java(base_aidl)
+    tree = glob(cache, ref, "frameworks/native", "libs/binder")
+    dbg_tree = glob(cache, ref, "frameworks/native", "libs/binderdebug")
+    row["stability"] = stability_present(tree)
+    row["binderdebug"] = binderdebug_present(dbg_tree)
+    row["status_to_string"] = status_to_string(
+        glob(cache, ref, "system/core", "libutils") +
+        glob(cache, ref, "system/libbase", "include"), None)
+    return row
+
+
+# The fields two rows must share to be treated as the same variant. Collapsing
+# happens for the TABLE only; the matrix keeps every measured ref, and a tip ref
+# is never collapsed into a numbered row at all.
+BEHAVIOUR_KEYS = ["usage", "options", "short_options", "proto_shim",
+                  "list_header_or_list", "combines", "error_style",
+                  "cmd_no_args", "cmd_wait", "shell_callback", "shell_args",
+                  "list_services", "rr_send_writes", "rr_send_java",
+                  "stability", "binderdebug", "status_to_string"]
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--cache", default="third_party/aosp-sources")
@@ -302,7 +398,7 @@ def main():
     cache.mkdir(parents=True, exist_ok=True)
 
     print("==> fetching per-ref sources (cached under %s)" % cache)
-    for api, ref in sorted(REFS.items()):
+    for ref in list(REFS.values()) + TIPS:
         d = cache / ref
         # Per-dir check rather than a ref-level stamp: adding a directory to
         # FETCH must fetch it on refs that were cached before it was added.
@@ -333,86 +429,18 @@ def main():
     print()
 
     # ------------------------------------------------------------------ rows
-    rows = []
-    for api, ref in sorted(REFS.items()):
-        # frameworks/base files are fetched per-ref here (not archived with the
-        # rest) because core/java is a multi-gigabyte tree in archive form.
-        for bf in BASE_FILES:
-            if not (cache / ref / "frameworks/base" / bf).exists():
-                src = fetch_file("frameworks/base", bf, ref)
-                if src is None:
-                    sys.exit(f"{ref}: {bf} not found on frameworks/base")
-                p = cache / ref / "frameworks/base" / bf
-                p.parent.mkdir(parents=True, exist_ok=True)
-                p.write_text(src)
-        dsrc = read(cache, ref, "frameworks/native", "cmds/dumpsys/dumpsys.cpp")
-        csrc = read(cache, ref, "frameworks/native", "cmds/cmd/cmd.cpp")
-        if dsrc is None or csrc is None:
-            sys.exit(f"{ref}: dumpsys.cpp or cmd.cpp missing - path moved?")
-        u, opts = dumpsys_usage(dsrc), dumpsys_options(dsrc)
-        if not u:
-            sys.exit(f"{ref}: no usage() found")
-        row = dict(
-            api=api, ref=ref, usage=u, options=opts,
-            short_options=dumpsys_short_options(dsrc),
-            proto_shim=has_proto_shim(dsrc),
-            list_header_or_list=list_header_or_list(dsrc),
-            combines=combines_dump_types(dsrc),
-            error_style=dump_error_style(dsrc),
-            cmd_no_args=cmd_no_args(csrc),
-            cmd_wait=cmd_has_wait(csrc),
-        )
+    rows = [measure_row(api, ref, cache) for api, ref in sorted(REFS.items())]
 
-        # binder surface
-        ib = read(cache, ref, "frameworks/native", "libs/binder/include/binder/IBinder.h")
-        if ib is None:
-            ib = read(cache, ref, "frameworks/native", "include/binder/IBinder.h")
-        if ib is None:
-            sys.exit(f"{ref}: IBinder.h not found in either header root")
-        ism = read(cache, ref, "frameworks/native", "libs/binder/include/binder/IServiceManager.h")
-        if ism is None:
-            ism = read(cache, ref, "frameworks/native", "include/binder/IServiceManager.h")
-        irr = read(cache, ref, "frameworks/native", "libs/binder/include/binder/IResultReceiver.h")
-        if irr is None:
-            irr = read(cache, ref, "frameworks/native", "include/binder/IResultReceiver.h")
-        cb, arity = ibinder_shell_command(ib)
-        if cb is None:
-            sys.exit(f"{ref}: shellCommand signature not found in IBinder.h")
-        row["shell_callback"] = cb
-        row["shell_args"] = arity
-        row["list_services"] = servicemanager_list_services(ism)
-        row["rr_send"] = result_receiver_send(irr)
-        row["ibinder"] = ibinder_members(ib)
-        irr_cpp = read(cache, ref, "frameworks/native", "libs/binder/IResultReceiver.cpp")
-        if irr_cpp is None:
-            sys.exit(f"{ref}: IResultReceiver.cpp not found")
-        row["rr_send_writes"] = rr_send_native(irr_cpp)
-        base_aidl = read(cache, ref, "frameworks/base",
-                         BASE_FILES[0])
-        row["rr_send_java"] = rr_send_java(base_aidl)
-        tree = glob(cache, ref, "frameworks/native", "libs/binder")
-        dbg_tree = glob(cache, ref, "frameworks/native", "libs/binderdebug")
-        row["stability"] = stability_present(tree)
-        row["binderdebug"] = binderdebug_present(dbg_tree)
-        row["status_to_string"] = status_to_string(
-            glob(cache, ref, "system/core", "libutils") +
-            glob(cache, ref, "system/libbase", "include"), None)
-        rows.append(row)
+    # Tips are measured by the same function and carry no API level.
+    for ref in TIPS:
+        rows.append(measure_row(None, ref, cache))
 
-    # The main row must be a real measurement of main, never a copy of a
-    # release row. Assert it against its own fetch, which it is by construction;
-    # the load-bearing check is below: two releases with identical behaviour are
-    # collapsed ONLY for the table, while the matrix keeps both rows.
-    behaviour_keys = ["usage", "options", "short_options", "proto_shim",
-                      "list_header_or_list", "combines", "error_style",
-                      "cmd_no_args", "cmd_wait", "shell_callback", "shell_args",
-                      "list_services", "rr_send_writes", "rr_send_java",
-                      "stability", "binderdebug", "status_to_string"]
-
-    # collapse consecutive identical rows into table variants
+    # collapse consecutive identical rows into table variants. Tips are excluded:
+    # whatever `main` has already changed belongs to a release that does not
+    # exist yet, and folding it into a numbered row would ship it as that release.
     variants = []
-    for r in rows:
-        if variants and all(r[k] == variants[-1][k] for k in behaviour_keys):
+    for r in [x for x in rows if x["api"] is not None]:
+        if variants and all(r[k] == variants[-1][k] for k in BEHAVIOUR_KEYS):
             variants[-1]["max_api"] = r["api"]
         else:
             v = dict(r)
@@ -494,11 +522,15 @@ def main():
     w("ref's own source tree; nothing is inferred from a neighbouring release.")
     w("Regenerate after adding a ref: `./scripts/gen_compat.py`.")
     w("")
+    w("A row marked `tip` is `main`: measured, but given no API level, because no")
+    w("release has been cut from it yet. It is never folded into a numbered row -")
+    w("whatever it has already changed belongs to a release that does not exist.")
+    w("")
     w("| API | ref | optstring | long options | proto shim | list hdr `-l` | dump types | err style | cmd no-args | cmd `-w` |")
     w("|----:|-----|-----------|--------------|------------|---------------|------------|-----------|-------------|----------|")
     for r in rows:
-        w("| %d | `%s` | `%s` | %s | %s | %s | %s | %d | %s | %s |" % (
-            r["api"], r["ref"], r["short_options"],
+        w("| %s | `%s` | `%s` | %s | %s | %s | %s | %d | %s | %s |" % (
+            r["api"] if r["api"] is not None else "tip", r["ref"], r["short_options"],
             ", ".join("`--%s`" % o for o in r["options"]) or "-",
             "yes" if r["proto_shim"] else "no",
             "yes" if r["list_header_or_list"] else "no",
@@ -513,8 +545,8 @@ def main():
     w("|----:|-----|-------------------------|----------------|----------------------|-------------|---------------|---------------|-----------------|------------------|")
     for r in rows:
         st = "yes" if r["status_to_string"] else "**absent**"
-        w("| %d | `%s` | %s | %s | `%s` | `%s` | %s | %s | %s | %s |" % (
-            r["api"], r["ref"],
+        w("| %s | `%s` | %s | %s | `%s` | `%s` | %s | %s | %s | %s |" % (
+            r["api"] if r["api"] is not None else "tip", r["ref"],
             "yes" if r["shell_callback"] else "**no**",
             "flagless" if r["list_services"] and "dumpsysFlags" not in r["list_services"][0]
             else "flags",
@@ -533,6 +565,19 @@ def main():
     with open("scripts/compat_facts.json", "w") as f:
         json.dump(rows, f, indent=1)
     print("==> scripts/compat_facts.json written")
+
+    # What the tip already changed relative to the newest CUT release. Reported,
+    # never encoded: acting on it would mean shipping unreleased behaviour as if
+    # it were that release's.
+    newest = max(x["api"] for x in rows if x["api"] is not None)
+    base_row = next(x for x in rows if x["api"] == newest)
+    for tip in [x for x in rows if x["api"] is None]:
+        diffs = [k for k in BEHAVIOUR_KEYS if tip[k] != base_row[k]]
+        if diffs:
+            print(f"    note: {tip['ref']} already differs from API {newest} in: "
+                  f"{', '.join(diffs)} (not encoded - no release yet)")
+        else:
+            print(f"    note: {tip['ref']} still matches API {newest} in every measured field")
 
 
 if __name__ == "__main__":
