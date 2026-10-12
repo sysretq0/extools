@@ -27,5 +27,7 @@ int main(int argc, char** argv) {
     // No service named is not handled here: the parser below prints the message
     // THIS release uses and returns 20, which is what the real tool does. Its
     // wording changed in API 30 and is not ours to invent.
-    return etools::run_cmd_tool(static_cast<int>(av.size()) - 1, av.data() + 1, ext);
+    // Empty argv (execve with NULL argv): av is empty, so pass 0/nullptr just like
+    // dumpsyse; parse_cmd then hits idx >= argc and returns 20 on its own.
+    return etools::run_cmd_tool(av.empty() ? 0 : static_cast<int>(av.size()) - 1, av.empty() ? nullptr : av.data() + 1, ext);
 }

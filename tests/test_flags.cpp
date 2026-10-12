@@ -1137,6 +1137,78 @@ int main() {
         ok(ext({"dumpsyse", "--ext-help", "power"}, ExtTool::kDumpsys, &f, &rest) &&
                f.want_help && rest.size() == 2 && rest[1] == "power",
            "--ext-help does not swallow the service name");
+
+        // ---- Audit fixes. Every assertion below failed before its fix and
+        // names the measurement or the AOSP source line that proves the new
+        // behaviour is the right one.
+
+        // ---- F8: the -t error's unit word was added in API 28 ----------------
+        // Measured from the 16 vendored AOSP refs: android-8.0.0_r1/dumpsys.cpp:116
+        // and android-8.1.0_r1/dumpsys.cpp:117 print no unit word at all;
+        // android-9.0.0_r1/dumpsys.cpp:169 and every later ref add "(seconds)".
+        std::string err26, err28;
+        ok(!pd_at(26, {"dumpsys", "-t", "abc", "power"}, &o, &err26) &&
+               err26 == "Error: invalid timeout number: 'abc'",
+           "API 26/27 print the -t error with no unit word");
+        ok(!pd_at(28, {"dumpsys", "-t", "abc", "power"}, &o, &err28) &&
+               err28 == "Error: invalid timeout(seconds) number: 'abc'",
+           "API 28+ print (seconds) in the -t error");
+
+        // ---- F1: AOSP holds the -t seconds in an int, and that bounds it ----
+        // Exit codes measured against /system/bin/dumpsys on an API 34 device.
+        ok(!pd_at(34, {"dumpsys", "-t", "2147483648", "power"}, &o),
+           "-t 2147483648 is rejected, as the real tool is (measured rc=255)");
+        ok(!pd_at(34, {"dumpsys", "-t", "99999999999999999999", "power"}, &o),
+           "-t 99999999999999999999 is rejected, as the real tool is (measured rc=255)");
+        ok(pd_at(34, {"dumpsys", "-t", "99999999999", "power"}, &o),
+           "-t 99999999999 is accepted, as the real tool is (measured rc=0)");
+        ok(pd_at(34, {"dumpsys", "-t", "1000000000", "power"}, &o),
+           "-t 1000000000 is accepted, as the real tool is (measured rc=0)");
+        ok(pd_at(34, {"dumpsys", "-t", " 5", "power"}, &o) && o.timeout_ms == 5000,
+           "the leading space strtol tolerates is still tolerated");
+
+        // ---- F6: '+' and ':' are optstring metacharacters, not option letters -
+        // Measured: stock `dumpsys activity -+` prints nothing.
+        ok(pd_at(26, {"dumpsys", "activity", "-+"}, &o) && o.warning.empty(),
+           "on API 26 -+ is a dump argument, not a client-side flag");
+        ok(pd_at(26, {"dumpsys", "activity", "-:"}, &o) && o.warning.empty(),
+           "on API 26 -: is a dump argument, not a client-side flag");
+        ok(pd_at(34, {"dumpsys", "power", "-t"}, &o) && !o.warning.empty(),
+           "a real client-side flag placed late still warns");
+
+        // ---- F2: an --ext- flag's value is never swallowed from another token -
+        ok(!ext({"dumpsyse", "--ext-section", "--ext-loops", "power"}, ExtTool::kDumpsys,
+                &f, &rest),
+           "a typo'd --ext- name is reported, not eaten as a value");
+        ok(!ext({"dumpsyse", "--ext-section", "-t", "5", "power"}, ExtTool::kDumpsys,
+                &f, &rest),
+           "a dumpsys flag is not eaten as an --ext- value");
+        ok(ext({"dumpsyse", "--ext-section", "Battery saving stats", "power"},
+               ExtTool::kDumpsys, &f, &rest) && f.section == "Battery saving stats",
+           "a valid non-dash value still parses");
+
+        // ---- F3: --ext-loop=N is a documented spelling and must work ---------
+        ok(ext({"dumpsyse", "--ext-loop=5", "power"}, ExtTool::kDumpsys, &f, &rest) &&
+               f.loop && f.loop_count == 5,
+           "--ext-loop=5 sets a bounded count");
+        ok(ext({"dumpsyse", "--ext-loop=3", "power"}, ExtTool::kDumpsys, &f, &rest) &&
+               rest.size() == 2 && rest[1] == "power",
+           "the equals form does not consume the service name");
+        ok(!ext({"dumpsyse", "--ext-loop=abc", "power"}, ExtTool::kDumpsys, &f, &rest),
+           "--ext-loop=abc is refused with a message, not silently");
+        ok(ext({"dumpsyse", "--ext-loop", "3", "power"}, ExtTool::kDumpsys, &f, &rest) &&
+               f.loop_count == 3 && rest.size() == 2 && rest[1] == "power",
+           "the space-separated form is unchanged");
+        ok(ext({"dumpsyse", "--ext-loop", "power"}, ExtTool::kDumpsys, &f, &rest) && f.loop &&
+               f.loop_count == 0 && rest.size() == 2 && rest[1] == "power",
+           "the bare form still means until-interrupted");
+
+        // ---- F5/P1: interval 0 is the busy loop the rationale prevents -------
+        ok(!ext({"dumpsyse", "--ext-interval", "0", "power"}, ExtTool::kDumpsys, &f, &rest),
+           "--ext-interval 0 is rejected (the busy loop -1 would be)");
+        ok(ext({"dumpsyse", "--ext-interval", "1", "power"}, ExtTool::kDumpsys, &f, &rest) &&
+               f.interval_ms == 1,
+           "--ext-interval 1 is still accepted");
     }
 
     if (g_fail) { std::fprintf(stderr, "\n%d check(s) failed\n", g_fail); return 1; }

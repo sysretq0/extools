@@ -350,12 +350,6 @@ long dump(const std::string& service, const std::vector<std::string>& args, int 
     return dump_into(service, args, out_fd, nullptr, timeout_ms, timed_out);
 }
 
-long dump_capture(const std::string& service, const std::vector<std::string>& args,
-                  std::string* out, unsigned timeout_ms, bool* timed_out) {
-    out->clear();
-    return dump_into(service, args, -1, out, timeout_ms, timed_out);
-}
-
 namespace internal {
 
 long dump_dumpsys(const std::string& service, const std::vector<std::string>& args,

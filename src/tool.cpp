@@ -25,6 +25,7 @@
 #include <binder/ProcessState.h>
 #include <utils/String16.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -65,10 +66,7 @@ void write_timeout_notice(const std::string& name, long timeout_ms) {
 }
 
 bool is_skipped(const std::vector<std::string>& skipped, const std::string& name) {
-    for (const std::string& s : skipped) {
-        if (s == name) return true;
-    }
-    return false;
+    return std::find(skipped.begin(), skipped.end(), name) != skipped.end();
 }
 
 // One pass of the dump tool: exactly what `dumpsys` would do with the same argv,

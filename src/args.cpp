@@ -62,8 +62,10 @@ const compat::CmdVariant* cmd_variant_for(int sdk) {
 // Hardcoding the list per release is what makes that distinction wrong.
 bool is_client_side_flag(const struct option* table, const std::string& a,
                          const char* optstring) {
-    if (a.size() == 2 && a[0] == '-' && std::strchr(optstring, a[1]) != nullptr &&
-        a[1] != '-') {
+    if (a.size() == 2 && a[0] == '-' && a[1] != '-' &&
+        // '+' and ':' are getopt optstring METACHARACTERS, not option letters, so a
+        // dump argument like `-+` or `-:` is never a client-side flag.
+        a[1] != '+' && a[1] != ':' && std::strchr(optstring, a[1]) != nullptr) {
         return true;
     }
     if (a.rfind("--", 0) != 0) return false;
@@ -168,14 +170,21 @@ bool parse_dumpsys(int argc, char** argv, DumpsysOptions* out, std::string* erro
         }
         case 't': {   // seconds, per dumpsys.cpp
             char* end = nullptr;
-            const long v = strtol(optarg, &end, 10) * 1000;
-            if (*end != '\0' || v <= 0) {
+            // AOSP stores SECONDS IN AN int and never checks errno, so the
+            // long-to-int truncation is what bounds the accepted range: 2^31 and
+            // above comes back non-positive and is rejected, just like upstream.
+            const int seconds = static_cast<int>(strtol(optarg, &end, 10));
+            // API 26/27 print no unit word ("Error: invalid timeout number: '%s'",
+            // dumpsys.cpp:117); API 28+ print "(seconds)" (dumpsys.cpp:169).
+            const char* unit = variant->min_api >= 28 ? "(seconds)" : "";
+            if (*end != '\0' || seconds <= 0) {
                 if (error) {
-                    *error = std::string("Error: invalid timeout(seconds) number: '") + optarg + "'";
+                    *error = std::string("Error: invalid timeout") + unit +
+                             " number: '" + optarg + "'";
                 }
                 return false;   // message only, no usage
             }
-            out->timeout_ms = v;
+            out->timeout_ms = static_cast<long>(seconds) * 1000;
             break;
         }
         case 'T': {   // milliseconds, per dumpsys.cpp

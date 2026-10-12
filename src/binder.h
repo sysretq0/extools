@@ -32,12 +32,6 @@ android::sp<android::IServiceManager> manager();
 // makes every callback a dead transaction.
 void ensure_pool();
 
-// One service's dump, captured into a string instead of streamed. The reason
-// this exists rather than a flag on dump(): a section's end is not known until
-// the next header arrives, which may be never, so a stream cannot be filtered.
-long dump_capture(const std::string& service, const std::vector<std::string>& args,
-                  std::string* out, unsigned timeout_ms, bool* timed_out);
-
 // A dump as the dumpsys TOOL performs it: the requested dump types are written
 // into the same pipe first, from the same thread, before the service dump, so
 // the two arrive in AOSP's order.

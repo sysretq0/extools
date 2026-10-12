@@ -42,7 +42,14 @@ bool parse_count(const char* text, long* out, long max_value = LONG_MAX) {
 bool loop_value(const std::vector<std::string>& argv, size_t* i, const char* inline_value,
                 const char* tool, long* out) {
     *out = 0;
-    if (inline_value != nullptr) return parse_count(inline_value, out);
+    if (inline_value != nullptr) {
+        if (!parse_count(inline_value, out)) {
+            std::fprintf(stderr, "%s: --ext-loop needs a non-negative count, got '%s'\n", tool,
+                         inline_value);
+            return false;
+        }
+        return true;
+    }
     if (*i + 1 < argv.size() && !argv[*i + 1].empty() && argv[*i + 1][0] >= '0' &&
         argv[*i + 1][0] <= '9') {
         if (!parse_count(argv[*i + 1].c_str(), out)) {
@@ -92,6 +99,22 @@ bool parse_ext_flags(int argc, char** argv, ExtTool which, ExtFlags* out,
                 ++i;
                 owned = all[i];
                 value = owned.c_str();
+                // A value that begins with a dash is not a value: it is the next
+                // option, and consuming it would both hide the real typo and
+                // leave the value behind as a service name.
+                if (owned[0] == '-') {
+                    if (owned.rfind(kExtPrefix, 0) == 0) {
+                        std::fprintf(stderr, "%s: unrecognized option '%s'\n", tool,
+                                     owned.c_str());
+                        std::fprintf(stderr, "%s: (this project's own options start with '%s'; "
+                                             "try %s --ext-help)\n",
+                                     tool, kExtPrefix, tool);
+                    } else {
+                        std::fprintf(stderr, "%s: option '%s%s' requires an argument\n", tool,
+                                     kExtPrefix, flag);
+                    }
+                    return false;
+                }
                 return true;
             }
             std::fprintf(stderr, "%s: option '%s%s' requires an argument\n", tool, kExtPrefix,
@@ -112,14 +135,14 @@ bool parse_ext_flags(int argc, char** argv, ExtTool which, ExtFlags* out,
         };
 
         if (name == "loop") {
-            if (wrong_tool(true) || !reject_value("loop")) return false;
+            if (wrong_tool(true)) return false;
             out->loop = true;
             if (!loop_value(all, &i, value, tool, &out->loop_count)) return false;
         } else if (name == "interval") {
             if (wrong_tool(true) || !need_value("interval")) return false;
-            if (!parse_count(value, &out->interval_ms)) {
+            if (!parse_count(value, &out->interval_ms) || out->interval_ms == 0) {
                 std::fprintf(stderr,
-                             "%s: --ext-interval needs a non-negative number of milliseconds, "
+                             "%s: --ext-interval needs a positive number of milliseconds, "
                              "got '%s'\n",
                              tool, value);
                 return false;
